@@ -1,26 +1,36 @@
 #! /usr/bin/env python
 # -*- coding: utf-8 -*-
-# Jonne Kleijer, Royal HaskoningDHV
+# Royal HaskoningDHV
 
-  
-#==============================================================================
-# FUNCTIONS
-#==============================================================================
-def get_radar_for_locations(x, y, grid_extent, aggregate, block=2):
+
+def sample_grid(coords, grid, extent, res, blocksize=2, agg=numpy.median):
     """
-    Radar "pixel"values for location closest to weather station.
-    Returns those pixels that are closest to the rain stations
+
     """
-    # Changes name size to block as size is a function as well and might confuse
+    # unpack extent
     left, right, top, bottom = grid_extent
-    block = block # use number of surrounding pixels
-    radar = []
-    for i in range(len(x)):
-        xoff = int((x[i] - left) / pixelwidth)
-        yoff = int((y[i] - bottom) / pixelheight) # pixelheight is -1000
-        data = aggregate[xoff:xoff + block, yoff:yoff + block]
-        radar.append(numpy.median(data))
-    return radar
+
+    # unpack resolution
+    xres, yres = res
+
+    values = []
+    for x, y in coords:
+        # x, y to row and column indices
+        col_left = int((x - left) / xres)
+        row_top = int((y - top) / yres) # yres is < 0
+
+        # add blocksize
+        col_idx = slice(col_left, col_left + blocksize)
+        row_idx = slice(row_top, row_top + blocksize)
+
+        # sample grid and aggregate block values
+        try:
+            block = grid[row_idx, col_idx]
+        except IndexError:
+            block = np.nan
+        values.append(agg(block))
+    return values
+
 
 def get_grid(aggregate, grid_extent):
     """
@@ -48,8 +58,8 @@ def plot_vgm_R(vgm_py, residual_py):
     plt.ylabel('semivariance')
     plt.title('R variogram')
     return figure
-    
-    
+
+
 def ked_R(x, y, z, radar, xi, yi, zi):
     """
     Run the kriging method using the R module "gstat".
@@ -103,7 +113,7 @@ def ked_R(x, y, z, radar, xi, yi, zi):
     leave_uncalibrated = numpy.logical_or(correction_factor < 0, correction_factor > 10)
     logging.info('Leaving {} extreme pixels uncalibrated.'.format(leave_uncalibrated.sum(),))
 #    rain_est[leave_uncalibrated] = zi[leave_uncalibrated]
-    
+
     leave_uncalibrated = leave_uncalibrated.reshape([500, 490])
     return rain_est, correction_factor
 
@@ -111,12 +121,12 @@ def ked_py(x, y, z, radar, xi, yi, zi):
     """
     Run the kriging method using the Pykrige module "gstat".
     Kriging External Drift (or universal kriging).
-    Input x, y, z and radar (rainstation size) shoud be equally long. 
+    Input x, y, z and radar (rainstation size) shoud be equally long.
     Inputs xi, yi and zi (radar size) should be equally long.
     """
     import pykrige
     # Create predictor
-    ked = pykrige.UniversalKriging(x, y, z, 
+    ked = pykrige.UniversalKriging(x, y, z,
                                    drift_terms = ["specified"],
                                    specified_drift = [radar,],
                                    variogram_model = "spherical",
@@ -125,12 +135,12 @@ def ked_py(x, y, z, radar, xi, yi, zi):
 #                                   variogram_function([100,50000,0], 5000)
                                    nlags = 10,
                                    verbose = True,
-                                   
+
     )
     ked.display_variogram_model()
-    
+
     # Run predictor
-    y_pred = ked.execute('points', xi, yi, 
+    y_pred = ked.execute('points', xi, yi,
                          specified_drift_arrays = [zi,],
                          backend="vectorized",
     )
